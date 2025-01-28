@@ -1,0 +1,4 @@
+.venv
+.env
+data/mongodb
+google-credentials.json
