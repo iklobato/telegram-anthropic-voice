@@ -11,3 +11,5 @@ gTTS>=2.5.1
 ffmpeg-python>=0.2.0
 numpy>=1.24.0
 accelerate>=0.27.1
+heyoo>=0.1.0
+flask>=2.0.0
