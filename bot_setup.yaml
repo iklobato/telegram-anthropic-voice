@@ -5,8 +5,9 @@
   become: yes
   vars:
     ansible_user: root
+    ansible_python_interpreter: /usr/bin/python3
     ansible_ssh_common_args: '-o ControlMaster=auto -o ControlPersist=3600 -o ServerAliveInterval=60 -o ServerAliveCountMax=60'
-    python_version: "3.10"
+    python_version: "3.11"
     docker_users: ["root"]
     venv_path: "/opt/telegram-bot/venv"
 
@@ -100,12 +101,20 @@
 
     # Virtual Environment Setup
     - name: Create Python virtual environment
-      command: python3 -m venv {{ venv_path }}
+      command: python3.10 -m venv {{ venv_path }}
       args:
         creates: "{{ venv_path }}"
 
     - name: Upgrade pip in virtual environment
       command: "{{ venv_path }}/bin/pip install --upgrade pip"
+
+    # Install PyYAML first
+    - name: Install PyYAML
+      pip:
+        name: "PyYAML<6,>=3.10"
+        state: present
+        virtualenv: "{{ venv_path }}"
+        virtualenv_command: python3.10 -m venv 
 
     # Install Python packages in virtual environment
     - name: Install required Python packages in virtual environment
@@ -170,3 +179,4 @@
 
     - name: reload sysctl
       command: sysctl --system
+
