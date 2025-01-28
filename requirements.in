@@ -1,21 +1,13 @@
-# Core dependencies
-python-telegram-bot==20.8
-anthropic==0.16.0
-
-# Audio processing
-pydub==0.25.1
-gTTS==2.5.4
-
-# Machine Learning
-transformers==4.37.2
-torch>=2.1.0
-torchaudio>=2.1.0
-
-# Database
-pymongo==4.6.1
-
-# Utilities
-python-dotenv==1.0.0
-typing-extensions>=4.8.0
-dataclasses>=0.6
-pathlib>=1.0.1
+python-telegram-bot>=20.8
+anthropic>=0.18.1
+python-dotenv>=1.0.0
+pydub>=0.25.1
+transformers>=4.38.1
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.2.0
+torchaudio>=2.2.0
+pymongo>=4.6.1
+gTTS>=2.5.1
+ffmpeg-python>=0.2.0
+numpy>=1.24.0
+accelerate>=0.27.1
