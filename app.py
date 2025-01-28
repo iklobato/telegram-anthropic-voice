@@ -131,8 +131,8 @@ class Bot:
                     try:
                         response = await asyncio.to_thread(
                             self.client.messages.create,
-                            model="claude-3-opus-20240229",
-                            max_tokens=1024,
+                            model="claude-3-haiku-20240307",
+                            max_tokens=512,
                             messages=messages,
                             system=self.config.personality,
                         )
@@ -150,23 +150,43 @@ class Bot:
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Hi! I'm {self.config.name}. Send me messages or voice notes!")
 
+
     async def handle_text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         MESSAGES_PROCESSED.labels(type='text').inc()
         chat_id = str(update.effective_chat.id)
+        
         try:
-            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-            response = await self.get_claude_response(chat_id, update.message.text)
+            # Start response generation immediately
+            response_task = asyncio.create_task(
+                self.get_claude_response(chat_id, update.message.text)
+            )
+            
+            # While waiting for Claude, do other tasks
             language = update.effective_user.language_code or 'en'
             self.chat_history.add_message(chat_id, "user", update.message.text, language)
-            self.chat_history.add_message(chat_id, "assistant", response, language)
-            audio = self.audio_processor.text_to_speech(response, language)
+            
+            # Wait for Claude response
+            response = await response_task
+            
+            # Start TTS conversion while sending text response
+            audio_task = asyncio.create_task(
+                asyncio.to_thread(
+                    self.audio_processor.text_to_speech,
+                    response,
+                    language
+                )
+            )
+            
+            # Send text response immediately
+            await update.message.reply_text(response)
+            
+            # Wait for audio and send it
+            audio = await audio_task
             with tempfile.NamedTemporaryFile(suffix=".ogg") as audio_file:
                 audio_file.write(audio)
                 audio_file.seek(0)
-                await asyncio.gather(
-                    update.message.reply_voice(voice=audio_file),
-                    update.message.reply_text(response)
-                )
+                await update.message.reply_voice(voice=audio_file)
+                
         except Exception as e:
             sentry_sdk.capture_exception(e)
             await update.message.reply_text("Sorry, something went wrong.")
