@@ -81,32 +81,50 @@ class AudioProcessor:
 
 class ChatHistory:
     def __init__(self, mongodb_uri: str):
-        self.client = pymongo.MongoClient(mongodb_uri)
-        self.db = self.client.telegram_bot
-        self.collection = self.db.chat_histories
+        try:
+            self.client = pymongo.MongoClient(
+                mongodb_uri,
+                serverSelectionTimeoutMS=5000  # 5 second timeout
+            )
+            # Test the connection
+            self.client.admin.command('ping')
+            self.db = self.client.telegram_bot
+            self.collection = self.db.chat_histories
+            
+            # Ensure indexes
+            self.collection.create_index([("chat_id", 1), ("timestamp", -1)])
+            
+        except pymongo.errors.ServerSelectionTimeoutError as e:
+            raise ConnectionError(f"Could not connect to MongoDB: {e}")
+        except pymongo.errors.OperationFailure as e:
+            raise ConnectionError(f"Authentication failed: {e}")
 
     def add_message(self, chat_id: str, role: str, content: str):
-        self.collection.insert_one(
-            {
+        try:
+            self.collection.insert_one({
                 "chat_id": chat_id,
                 "role": role,
                 "content": content,
                 "timestamp": datetime.utcnow(),
-            }
-        )
+            })
+        except Exception as e:
+            logging.error(f"Error adding message to MongoDB: {e}")
+            raise
 
     def get_recent_messages(self, chat_id: str, limit: int = 10):
-        messages = (
-            self.collection.find(
-                {"chat_id": chat_id}, {"_id": 0, "role": 1, "content": 1}
+        try:
+            messages = (
+                self.collection.find(
+                    {"chat_id": chat_id},
+                    {"_id": 0, "role": 1, "content": 1}
+                )
+                .sort("timestamp", -1)
+                .limit(limit)
             )
-            .sort("timestamp", -1)
-            .limit(limit)
-        )
-        if messages.retrieved:
             return list(messages)
-        return []
-
+        except Exception as e:
+            logging.error(f"Error retrieving messages from MongoDB: {e}")
+            return []
 
 class Bot:
     def __init__(self, config: BotConfig) -> None:

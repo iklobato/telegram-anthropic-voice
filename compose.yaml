@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   bot:
     build: .
@@ -5,37 +7,31 @@ services:
     environment:
       - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - MONGODB_URI=mongodb://mongodb:27017/
+      - MONGODB_URI=mongodb://${MONGO_USER:-root}:${MONGO_PASSWORD:-password}@mongodb:27017/telegram_bot?authSource=admin
     depends_on:
       mongodb:
         condition: service_healthy
     volumes:
       - .:/app
-  
+
   mongodb:
     image: mongo:latest
     restart: unless-stopped
-    user: "1000:1000"  
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-root}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-example}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-password}
+      MONGO_INITDB_DATABASE: telegram_bot
     volumes:
       - mongodb_data:/data/db
     ports:
       - "27017:27017"
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: ["CMD", "mongosh", "admin", "--eval", "db.adminCommand('ping')"]
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 20s
-    command: ["mongod", "--bind_ip_all"]
 
 volumes:
   mongodb_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${PWD}/data/mongodb  
 

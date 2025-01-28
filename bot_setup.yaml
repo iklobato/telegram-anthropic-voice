@@ -152,8 +152,8 @@
         line: "{{ item.line }}"
         state: present
       with_items:
-        - { regexp: '^#?ClientAliveInterval', line: 'ClientAliveInterval 60' }
-        - { regexp: '^#?ClientAliveCountMax', line: 'ClientAliveCountMax 60' }
+        - { regexp: '^#?ClientAliveInterval', line: 'ClientAliveInterval 120' }
+        - { regexp: '^#?ClientAliveCountMax', line: 'ClientAliveCountMax 120' }
       notify: restart ssh service
 
     # Setup Log Rotation
