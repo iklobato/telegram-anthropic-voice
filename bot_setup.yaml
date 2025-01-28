@@ -1,0 +1,172 @@
+# bot_setup.yml
+---
+- name: Configure Telegram Bot Server
+  hosts: all
+  become: yes
+  vars:
+    ansible_user: root
+    ansible_ssh_common_args: '-o ControlMaster=auto -o ControlPersist=3600 -o ServerAliveInterval=60 -o ServerAliveCountMax=60'
+    python_version: "3.10"
+    docker_users: ["root"]
+    venv_path: "/opt/telegram-bot/venv"
+
+  tasks:
+    # System Updates and Basic Tools
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install essential packages
+      apt:
+        name:
+          - ffmpeg
+          - git
+          - curl
+          - wget
+          - software-properties-common
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+          - lsb-release
+          - python3-pip
+          - python3-venv
+          - python3-full
+          - build-essential
+          - libssl-dev
+          - libffi-dev
+          - python3-dev
+          - procps
+        state: present
+
+    # Docker Installation
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
+        state: present
+
+    - name: Install Docker packages
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Start Docker service
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    # System Optimizations
+    - name: Set system limits for the bot
+      copy:
+        dest: /etc/security/limits.d/bot.conf
+        content: |
+          *         soft    nofile      65535
+          *         hard    nofile      65535
+          *         soft    nproc       65535
+          *         hard    nproc       65535
+
+    - name: Configure kernel parameters for better performance
+      copy:
+        dest: /etc/sysctl.d/99-telegram-bot.conf
+        content: |
+          net.core.somaxconn = 65535
+          vm.overcommit_memory = 1
+          net.ipv4.tcp_max_syn_backlog = 65535
+      notify: reload sysctl
+
+    # Create Bot Directory Structure
+    - name: Create bot directory
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      with_items:
+        - /opt/telegram-bot
+        - /opt/telegram-bot/data
+        - /opt/telegram-bot/data/mongodb
+        - /opt/telegram-bot/data/huggingface
+        - /opt/telegram-bot/logs
+
+    # Virtual Environment Setup
+    - name: Create Python virtual environment
+      command: python3 -m venv {{ venv_path }}
+      args:
+        creates: "{{ venv_path }}"
+
+    - name: Upgrade pip in virtual environment
+      command: "{{ venv_path }}/bin/pip install --upgrade pip"
+
+    # Install Python packages in virtual environment
+    - name: Install required Python packages in virtual environment
+      pip:
+        name:
+          - docker-compose
+          - python-telegram-bot
+          - anthropic
+          - pydub
+          - transformers
+          - torch
+          - torchaudio
+          - pymongo
+          - gtts
+          - sentencepiece
+          - accelerate
+        state: latest
+        virtualenv: "{{ venv_path }}"
+        virtualenv_command: python3 -m venv
+
+    # Create activation script
+    - name: Create activation script
+      copy:
+        dest: /opt/telegram-bot/activate.sh
+        content: |
+          #!/bin/bash
+          source {{ venv_path }}/bin/activate
+        mode: '0755'
+
+    # SSH Configuration
+    - name: Configure SSH timeout
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        state: present
+      with_items:
+        - { regexp: '^#?ClientAliveInterval', line: 'ClientAliveInterval 60' }
+        - { regexp: '^#?ClientAliveCountMax', line: 'ClientAliveCountMax 60' }
+      notify: restart ssh service
+
+    # Setup Log Rotation
+    - name: Configure logrotate for bot logs
+      copy:
+        dest: /etc/logrotate.d/telegram-bot
+        content: |
+          /opt/telegram-bot/logs/*.log {
+            daily
+            rotate 7
+            compress
+            delaycompress
+            missingok
+            notifempty
+            create 0640 root root
+          }
+
+  handlers:
+    - name: restart ssh service
+      service:
+        name: ssh
+        state: restarted
+
+    - name: reload sysctl
+      command: sysctl --system
