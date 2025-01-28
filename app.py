@@ -15,7 +15,14 @@ from datetime import datetime
 from gtts import gTTS
 from transformers.utils.import_utils import shutil
 from functools import lru_cache
+import sentry_sdk
+from sentry_sdk.integrations.pymongo import PyMongoIntegration
+from prometheus_client import Counter, Histogram, start_http_server
 
+CLAUDE_REQUEST_TIME = Histogram('claude_request_duration_seconds', 'Time spent processing Claude requests')
+MESSAGES_PROCESSED = Counter('messages_processed_total', 'Total messages processed', ['type'])
+CLAUDE_ERRORS = Counter('claude_errors_total', 'Total Claude API errors')
+VOICE_PROCESSING_ERRORS = Counter('voice_processing_errors_total', 'Total voice processing errors')
 
 @dataclass
 class BotConfig:
@@ -37,12 +44,10 @@ class BotConfig:
             mongodb_uri=os.environ["MONGODB_URI"],
         )
 
-
 class AudioProcessor:
     def __init__(self, speech_speed: float = 1.3) -> None:
         if not shutil.which('ffmpeg'):
             raise RuntimeError("ffmpeg not found")
-            
         self.speech_speed = speech_speed
         self.stt = pipeline("automatic-speech-recognition", model="openai/whisper-tiny", device="cpu")
 
@@ -59,18 +64,15 @@ class AudioProcessor:
             tts.save(mp3_file.name)
             audio = AudioSegment.from_mp3(mp3_file.name)
             audio = audio.speedup(playback_speed=self.speech_speed)
-
             with tempfile.NamedTemporaryFile(suffix=".ogg") as ogg_file:
                 audio.export(ogg_file.name, format="ogg", parameters=["-q:a", "4"])
                 return ogg_file.read()
-
 
 class ChatHistory:
     def __init__(self, mongodb_uri: str, ttl_days: int = 30):
         self.client = pymongo.MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
         self.db = self.client.telegram_bot
         self.collection = self.db.chat_histories
-        
         self.collection.create_index([("chat_id", 1), ("timestamp", -1)])
         self.collection.create_index("timestamp", expireAfterSeconds=ttl_days * 24 * 60 * 60)
 
@@ -99,90 +101,96 @@ class ChatHistory:
             {"chat_id": chat_id},
             {"role": 1, "content": 1}
         ).sort("timestamp", -1).limit(limit)
-        
         messages = list(cursor)
         messages.reverse()
         return messages
 
-
 class Bot:
     def __init__(self, config: BotConfig):
         self.config = config
+        sentry_sdk.init(
+            dsn=os.getenv("SENTRY_DSN"),
+            traces_sample_rate=1.0,
+            profiles_sample_rate=1.0,
+            integrations=[PyMongoIntegration()]
+        )
+        start_http_server(8000)
         self.audio_processor = AudioProcessor(speech_speed=config.speech_speed)
         self.client = anthropic.Client(api_key=config.anthropic_key)
         self.chat_history = ChatHistory(config.mongodb_uri)
-        self._setup_retries()
-
-    def _setup_retries(self):
         self.max_retries = 3
         self.retry_delay = 1
 
     async def get_claude_response(self, chat_id: str, user_message: str) -> str:
-        messages = self.chat_history.get_recent_messages(chat_id, self.config.message_history_limit)
-        messages = [{"role": msg["role"], "content": msg["content"]} for msg in messages]
-        messages.append({"role": "user", "content": user_message})
-
-        for attempt in range(self.max_retries):
+        with CLAUDE_REQUEST_TIME.time():
             try:
-                response = await asyncio.to_thread(
-                    self.client.messages.create,
-                    model="claude-3-opus-20240229",
-                    max_tokens=1024,
-                    messages=messages,
-                    system=self.config.personality,
-                )
-                return response.content[0].text
+                messages = self.chat_history.get_recent_messages(chat_id, self.config.message_history_limit)
+                messages = [{"role": msg["role"], "content": msg["content"]} for msg in messages]
+                messages.append({"role": "user", "content": user_message})
+                for attempt in range(self.max_retries):
+                    try:
+                        response = await asyncio.to_thread(
+                            self.client.messages.create,
+                            model="claude-3-opus-20240229",
+                            max_tokens=1024,
+                            messages=messages,
+                            system=self.config.personality,
+                        )
+                        return response.content[0].text
+                    except Exception as e:
+                        CLAUDE_ERRORS.inc()
+                        sentry_sdk.capture_exception(e)
+                        if attempt == self.max_retries - 1:
+                            raise
+                        await asyncio.sleep(self.retry_delay * (attempt + 1))
             except Exception as e:
-                if attempt == self.max_retries - 1:
-                    raise
-                await asyncio.sleep(self.retry_delay * (attempt + 1))
+                sentry_sdk.capture_exception(e)
+                raise
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Hi! I'm {self.config.name}. Send me messages or voice notes!")
 
     async def handle_text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        MESSAGES_PROCESSED.labels(type='text').inc()
         chat_id = str(update.effective_chat.id)
-        
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-        
-        response = await self.get_claude_response(chat_id, update.message.text)
-        language = update.effective_user.language_code or 'en'
-        
-        self.chat_history.add_message(chat_id, "user", update.message.text, language)
-        self.chat_history.add_message(chat_id, "assistant", response, language)
-
-        audio = self.audio_processor.text_to_speech(response, language)
-        
-        with tempfile.NamedTemporaryFile(suffix=".ogg") as audio_file:
-            audio_file.write(audio)
-            audio_file.seek(0)
-            await asyncio.gather(
-                update.message.reply_voice(voice=audio_file),
-                update.message.reply_text(response)
-            )
+        try:
+            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+            response = await self.get_claude_response(chat_id, update.message.text)
+            language = update.effective_user.language_code or 'en'
+            self.chat_history.add_message(chat_id, "user", update.message.text, language)
+            self.chat_history.add_message(chat_id, "assistant", response, language)
+            audio = self.audio_processor.text_to_speech(response, language)
+            with tempfile.NamedTemporaryFile(suffix=".ogg") as audio_file:
+                audio_file.write(audio)
+                audio_file.seek(0)
+                await asyncio.gather(
+                    update.message.reply_voice(voice=audio_file),
+                    update.message.reply_text(response)
+                )
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            await update.message.reply_text("Sorry, something went wrong.")
 
     async def handle_voice_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        MESSAGES_PROCESSED.labels(type='voice').inc()
         chat_id = str(update.effective_chat.id)
-        
-        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-        
         try:
+            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
             language = update.effective_user.language_code or 'en'
             voice = await update.message.voice.get_file()
-            
             with tempfile.NamedTemporaryFile(suffix=".ogg") as voice_file:
                 await voice.download_to_drive(voice_file.name)
                 text = await self.audio_processor.speech_to_text(Path(voice_file.name), language)
-                
                 if not text:
                     await update.message.reply_text("Could not understand audio. Please try again.")
                     return
-
                 await self.handle_text_message(
                     update._replace(message=update.message._replace(text=text)),
                     context
                 )
         except Exception as e:
+            VOICE_PROCESSING_ERRORS.inc()
+            sentry_sdk.capture_exception(e)
             logging.error(f"Voice processing error: {e}")
             await update.message.reply_text("Sorry, I couldn't process your voice message.")
 
@@ -196,21 +204,16 @@ class Bot:
             .write_timeout(30.0)
             .build()
         )
-
         application.add_handler(CommandHandler("start", self.start_command))
         application.add_handler(MessageHandler(filters.VOICE, self.handle_voice_message))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text_message))
-
         application.run_polling(allowed_updates=Update.ALL_TYPES)
-
 
 if __name__ == "__main__":
     import dotenv
     dotenv.load_dotenv()
-
     logging.basicConfig(
         format='%(asctime)s - %(levelname)s - %(message)s (%(filename)s:%(lineno)d)',
         level=logging.INFO,
     )
-
     Bot(BotConfig.from_env()).run()

@@ -13,3 +13,5 @@ numpy>=1.24.0
 accelerate>=0.27.1
 heyoo>=0.1.0
 flask>=2.0.0
+sentry-sdk[pymongo]
+prometheus_client

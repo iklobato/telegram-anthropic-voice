@@ -16,15 +16,22 @@ anyio==4.8.0
     # via
     #   anthropic
     #   httpx
+blinker==1.9.0
+    # via flask
 certifi==2024.12.14
     # via
     #   httpcore
     #   httpx
     #   requests
+    #   sentry-sdk
 charset-normalizer==3.4.1
     # via requests
 click==8.1.8
-    # via gtts
+    # via
+    #   flask
+    #   gtts
+colorama==0.4.6
+    # via heyoo
 distro==1.9.0
     # via anthropic
 dnspython==2.7.0
@@ -36,6 +43,8 @@ filelock==3.17.0
     #   huggingface-hub
     #   torch
     #   transformers
+flask==3.1.0
+    # via -r requirements.in
 fsspec==2024.12.0
     # via
     #   huggingface-hub
@@ -46,6 +55,8 @@ gtts==2.5.4
     # via -r requirements.in
 h11==0.14.0
     # via httpcore
+heyoo==0.1.2
+    # via -r requirements.in
 httpcore==1.0.7
     # via httpx
 httpx==0.26.0
@@ -62,12 +73,18 @@ idna==3.10
     #   anyio
     #   httpx
     #   requests
+itsdangerous==2.2.0
+    # via flask
 jinja2==3.1.5
-    # via torch
+    # via
+    #   flask
+    #   torch
 jiter==0.8.2
     # via anthropic
 markupsafe==3.0.2
-    # via jinja2
+    # via
+    #   jinja2
+    #   werkzeug
 mpmath==1.3.0
     # via sympy
 networkx==3.4.2
@@ -82,6 +99,8 @@ packaging==24.2
     #   accelerate
     #   huggingface-hub
     #   transformers
+prometheus-client==0.21.1
+    # via -r requirements.in
 psutil==6.1.1
     # via accelerate
 pydantic==2.10.6
@@ -91,7 +110,9 @@ pydantic-core==2.27.2
 pydub==0.25.1
     # via -r requirements.in
 pymongo==4.6.1
-    # via -r requirements.in
+    # via
+    #   -r requirements.in
+    #   sentry-sdk
 python-dotenv==1.0.0
     # via -r requirements.in
 python-telegram-bot==20.8
@@ -106,12 +127,18 @@ regex==2024.11.6
 requests==2.32.3
     # via
     #   gtts
+    #   heyoo
     #   huggingface-hub
+    #   requests-toolbelt
     #   transformers
+requests-toolbelt==1.0.0
+    # via heyoo
 safetensors==0.5.2
     # via
     #   accelerate
     #   transformers
+sentry-sdk[pymongo]==2.20.0
+    # via -r requirements.in
 sniffio==1.3.1
     # via
     #   anthropic
@@ -143,4 +170,8 @@ typing-extensions==4.12.2
     #   pydantic-core
     #   torch
 urllib3==2.3.0
-    # via requests
+    # via
+    #   requests
+    #   sentry-sdk
+werkzeug==3.1.3
+    # via flask
