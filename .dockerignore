@@ -1,0 +1,18 @@
+# Never include sensitive files
+.env
+.env.*
+*.pem
+secrets/
+.git
+.gitignore
+
+# Development files
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+*.log
+
+# Documentation
+README.md
+docs/

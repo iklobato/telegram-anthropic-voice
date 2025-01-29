@@ -21,8 +21,6 @@ from datetime import datetime
 from gtts import gTTS
 from transformers.utils.import_utils import shutil
 from functools import lru_cache
-import sentry_sdk
-from sentry_sdk.integrations.pymongo import PyMongoIntegration
 from prometheus_client import Counter, Histogram, start_http_server
 
 CLAUDE_REQUEST_TIME = Histogram(
@@ -132,12 +130,6 @@ class ChatHistory:
 class Bot:
     def __init__(self, config: BotConfig):
         self.config = config
-        sentry_sdk.init(
-            dsn=os.getenv("SENTRY_DSN"),
-            traces_sample_rate=1.0,
-            profiles_sample_rate=1.0,
-            integrations=[PyMongoIntegration()],
-        )
         start_http_server(8000)
         self.audio_processor = AudioProcessor(speech_speed=config.speech_speed)
         self.client = anthropic.Client(api_key=config.anthropic_key)
@@ -167,12 +159,10 @@ class Bot:
                         return response.content[0].text
                     except Exception as e:
                         CLAUDE_ERRORS.inc()
-                        sentry_sdk.capture_exception(e)
                         if attempt == self.max_retries - 1:
                             raise
                         await asyncio.sleep(self.retry_delay * (attempt + 1))
             except Exception as e:
-                sentry_sdk.capture_exception(e)
                 raise
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -213,7 +203,6 @@ class Bot:
                 await update.message.reply_voice(voice=audio_file)
 
         except Exception as e:
-            sentry_sdk.capture_exception(e)
             await update.message.reply_text("Sorry, something went wrong.")
 
     async def handle_voice_message(
@@ -240,7 +229,6 @@ class Bot:
                 )
         except Exception as e:
             VOICE_PROCESSING_ERRORS.inc()
-            sentry_sdk.capture_exception(e)
             logging.error(f"Voice processing error: {e}")
             await update.message.reply_text(
                 "Sorry, I couldn't process your voice message."
@@ -275,3 +263,4 @@ if __name__ == "__main__":
         level=logging.INFO,
     )
     Bot(BotConfig.from_env()).run()
+
