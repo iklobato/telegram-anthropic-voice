@@ -7,7 +7,13 @@ import tempfile
 import asyncio
 import anthropic
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+)
 from pydub import AudioSegment
 from transformers import pipeline
 import pymongo
@@ -19,10 +25,17 @@ import sentry_sdk
 from sentry_sdk.integrations.pymongo import PyMongoIntegration
 from prometheus_client import Counter, Histogram, start_http_server
 
-CLAUDE_REQUEST_TIME = Histogram('claude_request_duration_seconds', 'Time spent processing Claude requests')
-MESSAGES_PROCESSED = Counter('messages_processed_total', 'Total messages processed', ['type'])
+CLAUDE_REQUEST_TIME = Histogram(
+    'claude_request_duration_seconds', 'Time spent processing Claude requests'
+)
+MESSAGES_PROCESSED = Counter(
+    'messages_processed_total', 'Total messages processed', ['type']
+)
 CLAUDE_ERRORS = Counter('claude_errors_total', 'Total Claude API errors')
-VOICE_PROCESSING_ERRORS = Counter('voice_processing_errors_total', 'Total voice processing errors')
+VOICE_PROCESSING_ERRORS = Counter(
+    'voice_processing_errors_total', 'Total voice processing errors'
+)
+
 
 @dataclass
 class BotConfig:
@@ -38,20 +51,27 @@ class BotConfig:
     def from_env(cls) -> 'BotConfig':
         return cls(
             name=os.getenv("BOT_NAME", "Sophie"),
-            personality=os.getenv("BOT_PERSONALITY", "You are Sophie, a friendly and helpful assistant."),
+            personality=os.getenv(
+                "BOT_PERSONALITY", "You are Sophie, a friendly and helpful assistant."
+            ),
             telegram_token=os.environ["TELEGRAM_TOKEN"],
             anthropic_key=os.environ["ANTHROPIC_API_KEY"],
             mongodb_uri=os.environ["MONGODB_URI"],
         )
+
 
 class AudioProcessor:
     def __init__(self, speech_speed: float = 1.3) -> None:
         if not shutil.which('ffmpeg'):
             raise RuntimeError("ffmpeg not found")
         self.speech_speed = speech_speed
-        self.stt = pipeline("automatic-speech-recognition", model="openai/whisper-tiny", device="cpu")
+        self.stt = pipeline(
+            "automatic-speech-recognition", model="openai/whisper-tiny", device="cpu"
+        )
 
-    async def speech_to_text(self, audio_path: Path, user_language: str = 'en') -> Optional[str]:
+    async def speech_to_text(
+        self, audio_path: Path, user_language: str = 'en'
+    ) -> Optional[str]:
         audio = AudioSegment.from_ogg(str(audio_path))
         with tempfile.NamedTemporaryFile(suffix=".wav") as wav_file:
             audio.export(wav_file.name, format="wav")
@@ -68,42 +88,46 @@ class AudioProcessor:
                 audio.export(ogg_file.name, format="ogg", parameters=["-q:a", "4"])
                 return ogg_file.read()
 
+
 class ChatHistory:
     def __init__(self, mongodb_uri: str, ttl_days: int = 30):
         self.client = pymongo.MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
         self.db = self.client.telegram_bot
         self.collection = self.db.chat_histories
         self.collection.create_index([("chat_id", 1), ("timestamp", -1)])
-        self.collection.create_index("timestamp", expireAfterSeconds=ttl_days * 24 * 60 * 60)
+        self.collection.create_index(
+            "timestamp", expireAfterSeconds=ttl_days * 24 * 60 * 60
+        )
 
     @lru_cache(maxsize=100)
     def get_chat_language(self, chat_id: str) -> str:
-        result = self.collection.find_one(
-            {"chat_id": chat_id},
-            {"language": 1}
-        )
+        result = self.collection.find_one({"chat_id": chat_id}, {"language": 1})
         return result.get("language", "en") if result else "en"
 
     def add_message(self, chat_id: str, role: str, content: str, language: str = "en"):
         try:
-            self.collection.insert_one({
-                "chat_id": chat_id,
-                "role": role,
-                "content": content,
-                "language": language,
-                "timestamp": datetime.utcnow(),
-            })
+            self.collection.insert_one(
+                {
+                    "chat_id": chat_id,
+                    "role": role,
+                    "content": content,
+                    "language": language,
+                    "timestamp": datetime.utcnow(),
+                }
+            )
         except Exception as e:
             logging.error(f"MongoDB error: {e}")
 
     def get_recent_messages(self, chat_id: str, limit: int = 10) -> List[dict]:
-        cursor = self.collection.find(
-            {"chat_id": chat_id},
-            {"role": 1, "content": 1}
-        ).sort("timestamp", -1).limit(limit)
+        cursor = (
+            self.collection.find({"chat_id": chat_id}, {"role": 1, "content": 1})
+            .sort("timestamp", -1)
+            .limit(limit)
+        )
         messages = list(cursor)
         messages.reverse()
         return messages
+
 
 class Bot:
     def __init__(self, config: BotConfig):
@@ -112,7 +136,7 @@ class Bot:
             dsn=os.getenv("SENTRY_DSN"),
             traces_sample_rate=1.0,
             profiles_sample_rate=1.0,
-            integrations=[PyMongoIntegration()]
+            integrations=[PyMongoIntegration()],
         )
         start_http_server(8000)
         self.audio_processor = AudioProcessor(speech_speed=config.speech_speed)
@@ -124,8 +148,12 @@ class Bot:
     async def get_claude_response(self, chat_id: str, user_message: str) -> str:
         with CLAUDE_REQUEST_TIME.time():
             try:
-                messages = self.chat_history.get_recent_messages(chat_id, self.config.message_history_limit)
-                messages = [{"role": msg["role"], "content": msg["content"]} for msg in messages]
+                messages = self.chat_history.get_recent_messages(
+                    chat_id, self.config.message_history_limit
+                )
+                messages = [
+                    {"role": msg["role"], "content": msg["content"]} for msg in messages
+                ]
                 messages.append({"role": "user", "content": user_message})
                 for attempt in range(self.max_retries):
                     try:
@@ -148,50 +176,49 @@ class Bot:
                 raise
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text(f"Hi! I'm {self.config.name}. Send me messages or voice notes!")
+        await update.message.reply_text(
+            f"Hi! I'm {self.config.name}. Send me messages or voice notes!"
+        )
 
-
-    async def handle_text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def handle_text_message(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
         MESSAGES_PROCESSED.labels(type='text').inc()
         chat_id = str(update.effective_chat.id)
-        
+
         try:
-            # Start response generation immediately
             response_task = asyncio.create_task(
                 self.get_claude_response(chat_id, update.message.text)
             )
-            
-            # While waiting for Claude, do other tasks
+
             language = update.effective_user.language_code or 'en'
-            self.chat_history.add_message(chat_id, "user", update.message.text, language)
-            
-            # Wait for Claude response
+            self.chat_history.add_message(
+                chat_id, "user", update.message.text, language
+            )
+
             response = await response_task
-            
-            # Start TTS conversion while sending text response
+
             audio_task = asyncio.create_task(
                 asyncio.to_thread(
-                    self.audio_processor.text_to_speech,
-                    response,
-                    language
+                    self.audio_processor.text_to_speech, response, language
                 )
             )
-            
-            # Send text response immediately
+
             await update.message.reply_text(response)
-            
-            # Wait for audio and send it
+
             audio = await audio_task
             with tempfile.NamedTemporaryFile(suffix=".ogg") as audio_file:
                 audio_file.write(audio)
                 audio_file.seek(0)
                 await update.message.reply_voice(voice=audio_file)
-                
+
         except Exception as e:
             sentry_sdk.capture_exception(e)
             await update.message.reply_text("Sorry, something went wrong.")
 
-    async def handle_voice_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def handle_voice_message(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
         MESSAGES_PROCESSED.labels(type='voice').inc()
         chat_id = str(update.effective_chat.id)
         try:
@@ -200,19 +227,24 @@ class Bot:
             voice = await update.message.voice.get_file()
             with tempfile.NamedTemporaryFile(suffix=".ogg") as voice_file:
                 await voice.download_to_drive(voice_file.name)
-                text = await self.audio_processor.speech_to_text(Path(voice_file.name), language)
+                text = await self.audio_processor.speech_to_text(
+                    Path(voice_file.name), language
+                )
                 if not text:
-                    await update.message.reply_text("Could not understand audio. Please try again.")
+                    await update.message.reply_text(
+                        "Could not understand audio. Please try again."
+                    )
                     return
                 await self.handle_text_message(
-                    update._replace(message=update.message._replace(text=text)),
-                    context
+                    update._replace(message=update.message._replace(text=text)), context
                 )
         except Exception as e:
             VOICE_PROCESSING_ERRORS.inc()
             sentry_sdk.capture_exception(e)
             logging.error(f"Voice processing error: {e}")
-            await update.message.reply_text("Sorry, I couldn't process your voice message.")
+            await update.message.reply_text(
+                "Sorry, I couldn't process your voice message."
+            )
 
     def run(self):
         application = (
@@ -225,12 +257,18 @@ class Bot:
             .build()
         )
         application.add_handler(CommandHandler("start", self.start_command))
-        application.add_handler(MessageHandler(filters.VOICE, self.handle_voice_message))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text_message))
+        application.add_handler(
+            MessageHandler(filters.VOICE, self.handle_voice_message)
+        )
+        application.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text_message)
+        )
         application.run_polling(allowed_updates=Update.ALL_TYPES)
+
 
 if __name__ == "__main__":
     import dotenv
+
     dotenv.load_dotenv()
     logging.basicConfig(
         format='%(asctime)s - %(levelname)s - %(message)s (%(filename)s:%(lineno)d)',
