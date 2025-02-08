@@ -25,11 +25,12 @@ RUN pip install --no-cache-dir -r requirements.txt \
 COPY . .
 
 RUN useradd -m -u 1000 bot && \
-    chown -R bot:bot /app
+    chown -R bot:bot /app && \
+    find /app -type d -exec chmod 755 {} \; && \
+    find /app -type f -exec chmod 644 {} \;
 
 USER bot
 
 EXPOSE 8000
 
 CMD ["python", "app4.py"]
-
