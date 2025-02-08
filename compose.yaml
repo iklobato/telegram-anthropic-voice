@@ -9,23 +9,4 @@ services:
     volumes:
       - .:/app
 
-  # mongodb:
-  #   image: mongo:latest
-  #   restart: unless-stopped
-  #   environment:
-  #     MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-root}
-  #     MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-password}
-  #     MONGO_INITDB_DATABASE: telegram_bot
-  #   volumes:
-  #     - mongodb_data:/data/db
-  #   ports:
-  #     - "27017:27017"
-  #   healthcheck:
-  #     test: ["CMD", "mongosh", "admin", "--eval", "db.adminCommand('ping')"]
-  #     interval: 10s
-  #     timeout: 5s
-  #     retries: 3
-  #     start_period: 20s
-
-volumes:
 
